@@ -37,6 +37,9 @@ pub enum EmulationError {
 
 #[derive(Debug, Error)]
 pub enum EmulationCreationError {
+    #[cfg(uinput)]
+    #[error("uinput backend: `{0}`")]
+    Uinput(#[from] UinputEmulationCreationError),
     #[cfg(wlroots)]
     #[error("wlroots backend: `{0}`")]
     Wlroots(#[from] WlrootsEmulationCreationError),
@@ -83,6 +86,11 @@ impl EmulationCreationError {
         false
     }
 }
+
+#[cfg(uinput)]
+#[derive(Debug, Error)]
+#[error("could not create uinput device (is /dev/uinput writable?): {0}")]
+pub struct UinputEmulationCreationError(#[from] std::io::Error);
 
 #[cfg(wlroots)]
 #[derive(Debug, Error)]

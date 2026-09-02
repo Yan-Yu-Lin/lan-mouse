@@ -11,6 +11,9 @@ pub use self::error::{EmulationCreationError, EmulationError, InputEmulationErro
 #[cfg(windows)]
 mod windows;
 
+#[cfg(uinput)]
+mod uinput;
+
 #[cfg(x11)]
 mod x11;
 
@@ -34,6 +37,8 @@ pub type EmulationHandle = u64;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Backend {
+    #[cfg(uinput)]
+    Uinput,
     #[cfg(wlroots)]
     Wlroots,
     #[cfg(libei)]
@@ -52,6 +57,8 @@ pub enum Backend {
 impl Display for Backend {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            #[cfg(uinput)]
+            Backend::Uinput => write!(f, "uinput"),
             #[cfg(wlroots)]
             Backend::Wlroots => write!(f, "wlroots"),
             #[cfg(libei)]
@@ -78,6 +85,8 @@ pub struct InputEmulation {
 impl InputEmulation {
     async fn with_backend(backend: Backend) -> Result<InputEmulation, EmulationCreationError> {
         let emulation: Box<dyn Emulation> = match backend {
+            #[cfg(uinput)]
+            Backend::Uinput => Box::new(uinput::UinputEmulation::new()?),
             #[cfg(wlroots)]
             Backend::Wlroots => Box::new(wlroots::WlrootsEmulation::new()?),
             #[cfg(libei)]
@@ -108,7 +117,12 @@ impl InputEmulation {
             return b;
         }
 
+        // uinput first: if /dev/uinput is writable it is compositor-agnostic
+        // and visible to evdev-level remappers (keyd etc.); it fails fast
+        // (EACCES / ENOENT) otherwise.
         for backend in [
+            #[cfg(uinput)]
+            Backend::Uinput,
             #[cfg(wlroots)]
             Backend::Wlroots,
             #[cfg(libei)]

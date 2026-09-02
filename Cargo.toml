@@ -81,7 +81,9 @@ default = [
     "libei_emulation",
     "rdp_emulation",
     "x11_emulation",
+    "uinput_emulation",
 ]
+uinput_emulation = ["input-emulation/uinput"]
 gtk = ["dep:lan-mouse-gtk"]
 layer_shell_capture = ["input-capture/layer_shell"]
 x11_capture = ["input-capture/x11"]

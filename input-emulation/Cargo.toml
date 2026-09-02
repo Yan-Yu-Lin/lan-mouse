@@ -47,6 +47,9 @@ ashpd = { version = "0.13.9", default-features = false, features = [
 ], optional = true }
 reis = { version = "0.7.0", features = ["tokio"], optional = true }
 
+[target.'cfg(target_os="linux")'.dependencies]
+evdev = { version = "0.13.2", optional = true }
+
 [target.'cfg(target_os="macos")'.dependencies]
 bitflags = "2.6.0"
 core-foundation = "0.10.0"
@@ -66,7 +69,8 @@ windows = { version = "0.61.2", features = [
 ] }
 
 [features]
-default = ["wlroots", "x11", "remote_desktop_portal", "libei"]
+default = ["wlroots", "x11", "remote_desktop_portal", "libei", "uinput"]
+uinput = ["dep:evdev"]
 wlroots = [
     "dep:wayland-client",
     "dep:wayland-protocols",
