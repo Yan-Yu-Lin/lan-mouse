@@ -14,7 +14,10 @@ use evdev::{
 };
 use input_event::{Event, KeyboardEvent, PointerEvent};
 
-use super::{Emulation, EmulationHandle, error::EmulationError};
+use super::{
+    Emulation, EmulationHandle,
+    error::{EmulationError, UinputEmulationCreationError},
+};
 
 /// evdev key codes range 0..=KEY_MAX (0x2ff); register all of them so any
 /// scancode the capture side sends is accepted by the kernel.
@@ -40,7 +43,7 @@ pub(crate) struct UinputEmulation {
 }
 
 impl UinputEmulation {
-    pub(crate) fn new() -> Result<Self, std::io::Error> {
+    pub(crate) fn new() -> Result<Self, UinputEmulationCreationError> {
         let mut keys = AttributeSet::<KeyCode>::new();
         for code in 1..=KEY_MAX {
             keys.insert(KeyCode::new(code));
