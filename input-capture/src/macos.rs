@@ -166,6 +166,16 @@ impl InputCaptureState {
         match producer_event {
             ProducerEvent::Release => {
                 if self.current_pos.is_some() {
+                    // hotkey switching leaves the (hidden) cursor parked at
+                    // the screen edge; bring it to the middle of the main
+                    // display so the user doesn't have to hunt for it.
+                    let b = CGDisplay::main().bounds();
+                    let center = CGPoint::new(
+                        b.origin.x + b.size.width / 2.,
+                        b.origin.y + b.size.height / 2.,
+                    );
+                    CGDisplay::warp_mouse_cursor_position(center)
+                        .map_err(CaptureError::WarpCursor)?;
                     self.show_cursor()?;
                     self.current_pos = None;
                 }
@@ -252,30 +262,40 @@ fn get_events(
         }
     }
 
-    fn map_key(ev: &CGEvent) -> Result<u32, CaptureError> {
+    /// Apple's `fn` key. It has no evdev counterpart worth forwarding and
+    /// the keycode crate cannot map it; the F-key it modifies arrives as
+    /// its own event, so this one is dropped silently.
+    const MAC_FN_KEYCODE: i64 = 176;
+
+    fn map_key(ev: &CGEvent) -> Result<Option<u32>, CaptureError> {
         let code = ev.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE);
+        if code == MAC_FN_KEYCODE {
+            return Ok(None);
+        }
         match KeyMap::from_key_mapping(KeyMapping::Mac(code as u16)) {
-            Ok(k) => Ok(k.evdev as u32),
+            Ok(k) => Ok(Some(k.evdev as u32)),
             Err(()) => Err(CaptureError::KeyMapError(code)),
         }
     }
 
     match ev_type {
         CGEventType::KeyDown => {
-            let k = map_key(ev)?;
-            result.push(CaptureEvent::Input(Event::Keyboard(KeyboardEvent::Key {
-                time: 0,
-                key: k,
-                state: 1,
-            })));
+            if let Some(k) = map_key(ev)? {
+                result.push(CaptureEvent::Input(Event::Keyboard(KeyboardEvent::Key {
+                    time: 0,
+                    key: k,
+                    state: 1,
+                })));
+            }
         }
         CGEventType::KeyUp => {
-            let k = map_key(ev)?;
-            result.push(CaptureEvent::Input(Event::Keyboard(KeyboardEvent::Key {
-                time: 0,
-                key: k,
-                state: 0,
-            })));
+            if let Some(k) = map_key(ev)? {
+                result.push(CaptureEvent::Input(Event::Keyboard(KeyboardEvent::Key {
+                    time: 0,
+                    key: k,
+                    state: 0,
+                })));
+            }
         }
         CGEventType::FlagsChanged => {
             let mut depressed = XMods::empty();
@@ -303,7 +323,7 @@ fn get_events(
             let state = if depressed > *modifier_state { 1 } else { 0 };
             *modifier_state = depressed;
 
-            if let Ok(key) = map_key(ev) {
+            if let Ok(Some(key)) = map_key(ev) {
                 let key_event = CaptureEvent::Input(Event::Keyboard(KeyboardEvent::Key {
                     time: 0,
                     key,

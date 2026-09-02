@@ -214,6 +214,9 @@ impl Service {
             FrontendRequest::UpdateEnterHook(handle, enter_hook) => {
                 self.update_enter_hook(handle, enter_hook)
             }
+            FrontendRequest::UpdateLeaveHook(handle, leave_hook) => {
+                self.client_manager.set_leave_hook(handle, leave_hook)
+            }
             FrontendRequest::Enter(handle) => self.capture.enter(handle),
             FrontendRequest::Release => self.capture.release(),
             FrontendRequest::SaveConfiguration => self.save_config(),
@@ -231,6 +234,7 @@ impl Service {
                 pos: c.pos,
                 active: s.active,
                 enter_hook: c.cmd,
+                leave_hook: c.leave_cmd,
             })
             .collect();
         self.config.set_clients(clients);
@@ -351,7 +355,13 @@ impl Service {
             }
             ICaptureEvent::ClientEntered(handle) => {
                 log::info!("entering client {handle} ...");
-                self.spawn_hook_command(handle);
+                let cmd = self.client_manager.get_enter_cmd(handle);
+                self.spawn_hook_command(cmd);
+            }
+            ICaptureEvent::ClientLeft(handle) => {
+                log::info!("left client {handle}");
+                let cmd = self.client_manager.get_leave_cmd(handle);
+                self.spawn_hook_command(cmd);
             }
         }
     }
@@ -584,8 +594,8 @@ impl Service {
         self.notify_frontend(event);
     }
 
-    fn spawn_hook_command(&self, handle: ClientHandle) {
-        let Some(cmd) = self.client_manager.get_enter_cmd(handle) else {
+    fn spawn_hook_command(&self, cmd: Option<String>) {
+        let Some(cmd) = cmd else {
             return;
         };
         tokio::task::spawn_local(async move {

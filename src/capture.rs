@@ -30,6 +30,8 @@ pub(crate) enum ICaptureEvent {
     CaptureDisabled,
     /// capture disabled
     CaptureEnabled,
+    /// The active client was left (capture released for any reason).
+    ClientLeft(CaptureHandle),
     /// A (new) client was entered.
     /// In contrast to [`ICaptureEvent::CaptureBegin`] this
     /// event is only triggered when the capture was
@@ -252,6 +254,16 @@ impl CaptureTask {
 
         let r = self.do_capture_session(&mut capture).await;
 
+        // the backend is going away: if a client was still active, the
+        // logical capture state must not survive into the next backend
+        if let Some(handle) = self.active_client.take() {
+            log::warn!("capture session ended while client {handle} was active");
+            self.state = State::default();
+            self.event_tx
+                .send(ICaptureEvent::ClientLeft(handle))
+                .expect("channel closed");
+        }
+
         // FIXME replace with async drop when stabilized
         capture.terminate().await?;
 
@@ -317,6 +329,9 @@ impl CaptureTask {
                         capture.create(h, p).await?;
                     }
                     CaptureRequest::Destroy(h) => {
+                        if self.active_client == Some(h) {
+                            self.release_capture(capture).await?;
+                        }
                         self.remove_capture(h);
                         capture.destroy(h).await?;
                     }
@@ -384,7 +399,9 @@ impl CaptureTask {
         if let Err(e) = self.conn.send(event, handle).await {
             const DUR: Duration = Duration::from_millis(500);
             debounce!(PREV_LOG, DUR, log::warn!("releasing capture: {e}"));
-            capture.release().await?;
+            // go through the full release path so active_client is cleared
+            // and the leave hook fires
+            self.release_capture(capture).await?;
         }
         Ok(())
     }
@@ -431,6 +448,9 @@ impl CaptureTask {
             if let Err(e) = self.conn.send(ProtoEvent::Leave(0), handle).await {
                 log::warn!("failed to send Leave to client {handle}: {e}");
             }
+            self.event_tx
+                .send(ICaptureEvent::ClientLeft(handle))
+                .expect("channel closed");
         }
         capture.release().await
     }
