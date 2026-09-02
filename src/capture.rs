@@ -399,9 +399,13 @@ impl CaptureTask {
         if let Err(e) = self.conn.send(event, handle).await {
             const DUR: Duration = Duration::from_millis(500);
             debounce!(PREV_LOG, DUR, log::warn!("releasing capture: {e}"));
-            // go through the full release path so active_client is cleared
-            // and the leave hook fires
-            self.release_capture(capture).await?;
+            // Soft release only: the very first packet after (re)connect can
+            // fail with "not connected" while the DTLS handshake is still in
+            // flight, and the client is re-entered as soon as it succeeds.
+            // Treating that as a logical Leave would fire the leave hook and
+            // immediately undo the enter hook. Real disconnects surface as a
+            // peer Leave / ack timeout and go through release_capture.
+            capture.release().await?;
         }
         Ok(())
     }
