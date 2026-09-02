@@ -66,6 +66,8 @@ enum ProducerEvent {
     Create(Position),
     Destroy(Position),
     Grab(Position),
+    /// hotkey-triggered enter: grab without a barrier crossing
+    Enter(Position),
     EventTapDisabled,
     DisplayReconfigured,
 }
@@ -119,7 +121,14 @@ impl InputCaptureState {
 
     /// start the input capture by
     fn start_capture(&mut self, event: &CGEvent, position: Position) -> Result<(), CaptureError> {
-        let mut location = event.location();
+        self.start_capture_at(event.location(), position)
+    }
+
+    fn start_capture_at(
+        &mut self,
+        mut location: CGPoint,
+        position: Position,
+    ) -> Result<(), CaptureError> {
         let edge_offset = 1.0;
         // move cursor location to display bounds
         match position {
@@ -147,10 +156,12 @@ impl InputCaptureState {
         CGDisplay::show_cursor(&CGDisplay::main()).map_err(CaptureError::CoreGraphics)
     }
 
+    /// returns `Some(pos)` when a capture was started and a
+    /// [`CaptureEvent::Begin`] must be emitted for that position
     async fn handle_producer_event(
         &mut self,
         producer_event: ProducerEvent,
-    ) -> Result<(), CaptureError> {
+    ) -> Result<Option<Position>, CaptureError> {
         log::debug!("handling event: {producer_event:?}");
         match producer_event {
             ProducerEvent::Release => {
@@ -164,6 +175,26 @@ impl InputCaptureState {
                     self.hide_cursor()?;
                     self.current_pos = Some(pos);
                 }
+            }
+            ProducerEvent::Enter(pos) => {
+                if self.current_pos.is_some() {
+                    return Ok(None);
+                }
+                if !self.active_clients.contains(&pos) {
+                    log::warn!("enter: no active client at {pos:?}");
+                    return Ok(None);
+                }
+                // same as a barrier crossing, but from wherever the cursor is
+                let location = CGEvent::new(
+                    CGEventSource::new(CGEventSourceStateID::HIDSystemState)
+                        .map_err(|_| CaptureError::EnterNoCursor)?,
+                )
+                .map_err(|_| CaptureError::EnterNoCursor)?
+                .location();
+                self.start_capture_at(location, pos)?;
+                self.hide_cursor()?;
+                self.current_pos = Some(pos);
+                return Ok(Some(pos));
             }
             ProducerEvent::Create(p) => {
                 self.active_clients.insert(p);
@@ -203,7 +234,7 @@ impl InputCaptureState {
                 }
             }
         };
-        Ok(())
+        Ok(None)
     }
 }
 
@@ -672,6 +703,7 @@ impl MacOSInputCapture {
         log::info!("Enabling CGEvent tap");
         let event_tap_thread_state = state.clone();
         let event_tap_notify = notify_tx.clone();
+        let producer_event_tx = event_tx.clone();
         thread::spawn(move || {
             event_tap_thread(
                 event_tap_thread_state,
@@ -693,9 +725,14 @@ impl MacOSInputCapture {
                             break;
                         };
                         let mut state = state.lock().await;
-                        state.handle_producer_event(producer_event).await.unwrap_or_else(|e| {
-                            log::error!("Failed to handle producer event: {e}");
-                        })
+                        match state.handle_producer_event(producer_event).await {
+                            Ok(Some(pos)) => {
+                                // hotkey enter: emit Begin as a barrier crossing would
+                                let _ = producer_event_tx.send((pos, CaptureEvent::Begin)).await;
+                            }
+                            Ok(None) => {}
+                            Err(e) => log::error!("Failed to handle producer event: {e}"),
+                        }
                     }
                     _ = &mut tap_exit_rx => break,
                 }
@@ -777,6 +814,15 @@ impl Capture for MacOSInputCapture {
         tokio::task::spawn_local(async move {
             log::debug!("notifying Release");
             let _ = notify_tx.send(ProducerEvent::Release).await;
+        });
+        Ok(())
+    }
+
+    async fn enter(&mut self, pos: Position) -> Result<(), CaptureError> {
+        let notify_tx = self.notify_tx.clone();
+        tokio::task::spawn_local(async move {
+            log::debug!("notifying Enter {pos}");
+            let _ = notify_tx.send(ProducerEvent::Enter(pos)).await;
         });
         Ok(())
     }

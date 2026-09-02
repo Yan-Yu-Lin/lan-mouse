@@ -55,6 +55,9 @@ pub enum CaptureError {
     #[cfg(target_os = "macos")]
     #[error("Event tap disabled")]
     EventTapDisabled,
+    #[cfg(target_os = "macos")]
+    #[error("could not read cursor position for enter")]
+    EnterNoCursor,
 }
 
 #[derive(Debug, Error)]

@@ -214,6 +214,8 @@ impl Service {
             FrontendRequest::UpdateEnterHook(handle, enter_hook) => {
                 self.update_enter_hook(handle, enter_hook)
             }
+            FrontendRequest::Enter(handle) => self.capture.enter(handle),
+            FrontendRequest::Release => self.capture.release(),
             FrontendRequest::SaveConfiguration => self.save_config(),
         }
     }

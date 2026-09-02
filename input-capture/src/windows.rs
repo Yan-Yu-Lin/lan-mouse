@@ -34,6 +34,11 @@ impl Capture for WindowsInputCapture {
         Ok(())
     }
 
+    async fn enter(&mut self, _pos: Position) -> Result<(), CaptureError> {
+        /* on-demand grab not supported by this backend */
+        Ok(())
+    }
+
     async fn terminate(&mut self) -> Result<(), CaptureError> {
         Ok(())
     }

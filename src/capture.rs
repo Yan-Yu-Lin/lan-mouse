@@ -61,6 +61,8 @@ enum CaptureRequest {
     Reenable,
     /// set release bind
     SetReleaseBind(Vec<scancode::Linux>),
+    /// enter the given client without a barrier crossing
+    Enter(CaptureHandle),
 }
 
 impl Capture {
@@ -127,6 +129,12 @@ impl Capture {
     pub(crate) fn release(&self) {
         self.request_tx
             .send(CaptureRequest::Release)
+            .expect("channel closed");
+    }
+
+    pub(crate) fn enter(&self, handle: CaptureHandle) {
+        self.request_tx
+            .send(CaptureRequest::Enter(handle))
             .expect("channel closed");
     }
 
@@ -211,6 +219,7 @@ impl CaptureTask {
                         CaptureRequest::Create(h, p, t) => self.add_capture(h, p, t),
                         CaptureRequest::Destroy(h) => self.remove_capture(h),
                         CaptureRequest::Release => { /* nothing to do */ }
+                        CaptureRequest::Enter(_) => { /* capture not active */ }
                         CaptureRequest::SetReleaseBind(bind) => {
                             self.release_bind.borrow_mut().clone_from(&bind);
                         }
@@ -296,6 +305,13 @@ impl CaptureTask {
                 e = self.request_rx.recv() => match e.expect("channel closed") {
                     CaptureRequest::Reenable => { /* already active */ },
                     CaptureRequest::Release => self.release_capture(capture).await?,
+                    CaptureRequest::Enter(h) => {
+                        if self.captures.iter().any(|&(c, _, t)| c == h && t == CaptureType::Default) {
+                            capture.enter(h).await?;
+                        } else {
+                            log::warn!("enter: {h} is not an active client");
+                        }
+                    }
                     CaptureRequest::Create(h, p, t) => {
                         self.add_capture(h, p, t);
                         capture.create(h, p).await?;

@@ -259,6 +259,10 @@ pub enum FrontendRequest {
     RemoveAuthorizedKey(String),
     /// change the hook command
     UpdateEnterHook(u64, Option<String>),
+    /// enter a client without crossing the screen edge (hotkey switching)
+    Enter(ClientHandle),
+    /// release the active capture, returning input to this machine
+    Release,
     /// save config file
     SaveConfiguration,
 }

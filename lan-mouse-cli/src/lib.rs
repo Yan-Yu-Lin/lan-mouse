@@ -73,6 +73,10 @@ enum CliSubcommand {
     RemoveAuthorizedKey { sha256_fingerprint: String },
     /// save configuration to file
     SaveConfig,
+    /// enter a client without moving the pointer to the screen edge
+    Enter { id: ClientHandle },
+    /// release the active capture (return input to this machine)
+    Release,
 }
 
 pub async fn run(args: CliArgs) -> Result<(), CliError> {
@@ -165,6 +169,8 @@ async fn execute(cmd: CliSubcommand) -> Result<(), CliError> {
                 .await?
         }
         CliSubcommand::SaveConfig => tx.request(FrontendRequest::SaveConfiguration).await?,
+        CliSubcommand::Enter { id } => tx.request(FrontendRequest::Enter(id)).await?,
+        CliSubcommand::Release => tx.request(FrontendRequest::Release).await?,
     }
     Ok(())
 }

@@ -630,6 +630,11 @@ impl LanMouseInputCapture for LibeiInputCapture {
         Ok(())
     }
 
+    async fn enter(&mut self, _pos: Position) -> Result<(), CaptureError> {
+        /* on-demand grab not supported by this backend */
+        Ok(())
+    }
+
     async fn terminate(&mut self) -> Result<(), CaptureError> {
         self.cancellation_token.cancel();
         let task = &mut self.capture_task;
