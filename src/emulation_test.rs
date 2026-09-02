@@ -18,12 +18,42 @@ pub struct TestEmulationArgs {
     scroll: bool,
 }
 
-pub async fn run(config: Config, _args: TestEmulationArgs) -> Result<(), InputEmulationError> {
+pub async fn run(config: Config, args: TestEmulationArgs) -> Result<(), InputEmulationError> {
     log::info!("running input emulation test");
 
     let backend = config.emulation_backend().map(|b| b.into());
     let mut emulation = InputEmulation::new(backend).await?;
     emulation.create(0).await;
+
+    if args.keyboard {
+        // type "hi" once per second so a watcher (evtest / keyd monitor) can verify
+        use input_event::{KeyboardEvent, scancode::Linux};
+        loop {
+            for key in [Linux::KeyH as u32, Linux::KeyI as u32] {
+                for state in [1u8, 0u8] {
+                    let event = Event::Keyboard(KeyboardEvent::Key {
+                        time: 0,
+                        key,
+                        state,
+                    });
+                    emulation.consume(event, 0).await?;
+                    tokio::time::sleep(Duration::from_millis(30)).await;
+                }
+            }
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+    }
+
+    if args.scroll {
+        // one wheel notch down per second, then one up
+        loop {
+            for value in [120, -120] {
+                let event = Event::Pointer(PointerEvent::AxisDiscrete120 { axis: 0, value });
+                emulation.consume(event, 0).await?;
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+        }
+    }
 
     let start = Instant::now();
     let mut offset = (0, 0);
