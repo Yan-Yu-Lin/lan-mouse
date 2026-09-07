@@ -47,20 +47,20 @@ final class HUD {
         panel.hidesOnDeactivate = false
         panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenAuxiliary]
         background.wantsLayer = true
-        background.layer?.cornerRadius = 11
+        background.layer?.cornerRadius = 20
         background.layer?.masksToBounds = true
         panel.contentView = background
         background.addSubview(symbol)
         symbol.contentTintColor = .white
-        symbol.frame = NSRect(x: 11, y: 7, width: 24, height: 20)
+        symbol.frame = NSRect(x: 24, y: 14, width: 48, height: 40)
         macSound?.volume = 0.55
         linuxSound?.volume = 0.55
     }
 
     func draw() {
         guard let screen = NSScreen.main ?? NSScreen.screens.first else { return }
-        let visible = screen.visibleFrame
-        panel.setFrame(NSRect(x: visible.maxX - 64, y: visible.maxY - 52, width: 46, height: 34), display: true)
+        let visible = screen.frame
+        panel.setFrame(NSRect(x: visible.midX - 48, y: visible.midY - 34, width: 96, height: 68), display: true)
         // One solid hue per destination, with the same white keyboard glyph.
         let color = remote
             ? NSColor(srgbRed: 0.76, green: 0.20, blue: 0.23, alpha: 1)

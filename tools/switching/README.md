@@ -20,8 +20,8 @@ The existing uinput/keyd and Karabiner F19 keyboard path is retained.
   transition metadata, never typed content.
 - The switch hook runs in the capture task, in order: `connecting` (set raw keys),
   `remote` (matching acknowledgement), `local`, `error`, or silent `reset`.
-- The HUD never takes focus or clicks. It is a persistent 46×34 pt monochrome
-  keyboard badge: green for Mac, red for Linux. It changes on confirmed entry,
+- The HUD never takes focus or clicks. It is a persistent 96×68 pt monochrome
+  keyboard badge at screen center: green for Mac, red for Linux. It changes on confirmed entry,
   keeping its previous color while connecting. No "Controlling…" text.
 - Sound is enabled by default (Linux: Pop, Mac: Tink at 55% app volume).
   Set `LAN_MOUSE_SOUND=0` on the HUD launch agent to mute it. Duplicate states
