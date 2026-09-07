@@ -34,6 +34,8 @@ final class HUD {
     let background = NSView()
     let symbol = NSImageView()
     var remote = false
+    var dismiss: DispatchWorkItem?
+    let omarchyIcon = NSImage(contentsOf: URL(fileURLWithPath: CommandLine.arguments[0]).deletingLastPathComponent().appendingPathComponent("omarchy-icon.png"))
     let sounds = ProcessInfo.processInfo.environment["LAN_MOUSE_SOUND"] != "0"
     let macSound = NSSound(named: "Tink")
     let linuxSound = NSSound(named: "Pop")
@@ -52,7 +54,8 @@ final class HUD {
         panel.contentView = background
         background.addSubview(symbol)
         symbol.contentTintColor = .white
-        symbol.frame = NSRect(x: 24, y: 14, width: 48, height: 40)
+        symbol.imageScaling = .scaleProportionallyUpOrDown
+        symbol.frame = NSRect(x: 40, y: 25, width: 48, height: 54)
         macSound?.volume = 0.55
         linuxSound?.volume = 0.55
     }
@@ -60,13 +63,20 @@ final class HUD {
     func draw() {
         guard let screen = NSScreen.main ?? NSScreen.screens.first else { return }
         let visible = screen.frame
-        panel.setFrame(NSRect(x: visible.midX - 48, y: visible.midY - 34, width: 96, height: 68), display: true)
-        // One solid hue per destination, with the same white keyboard glyph.
+        panel.setFrame(NSRect(x: visible.midX - 64, y: visible.midY - 52, width: 128, height: 104), display: true)
+        // Original Omarchy package icon, rendered as a monochrome template.
         let color = remote
             ? NSColor(srgbRed: 0.76, green: 0.20, blue: 0.23, alpha: 1)
             : NSColor(srgbRed: 0.13, green: 0.49, blue: 0.29, alpha: 1)
         background.layer?.backgroundColor = color.cgColor
-        symbol.image = NSImage(systemSymbolName: "keyboard", accessibilityDescription: remote ? "Controlling Linux" : "Controlling Mac")
+        if remote {
+            omarchyIcon?.isTemplate = true
+            symbol.image = omarchyIcon
+            symbol.frame = NSRect(x: 30, y: 18, width: 68, height: 68)
+        } else {
+            symbol.image = NSImage(systemSymbolName: "apple.logo", accessibilityDescription: "Controlling Mac")
+            symbol.frame = NSRect(x: 40, y: 25, width: 48, height: 54)
+        }
         panel.orderFrontRegardless()
     }
 
@@ -74,7 +84,11 @@ final class HUD {
         guard states.contains(next), next != "connecting" else { return }
         let changed = remote != (next == "remote")
         remote = next == "remote"
+        dismiss?.cancel()
         draw()
+        let task = DispatchWorkItem { [weak self] in self?.panel.orderOut(nil) }
+        dismiss = task
+        DispatchQueue.main.asyncAfter(deadline: .now()+1.5, execute: task)
         if changed && sounds && announce && (next == "remote" || next == "local") {
             let sound = remote ? linuxSound : macSound
             sound?.stop()

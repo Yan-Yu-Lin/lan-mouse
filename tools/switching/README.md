@@ -20,9 +20,13 @@ The existing uinput/keyd and Karabiner F19 keyboard path is retained.
   transition metadata, never typed content.
 - The switch hook runs in the capture task, in order: `connecting` (set raw keys),
   `remote` (matching acknowledgement), `local`, `error`, or silent `reset`.
-- The HUD never takes focus or clicks. It is a persistent 96×68 pt monochrome
-  keyboard badge at screen center: green for Mac, red for Linux. It changes on confirmed entry,
-  keeping its previous color while connecting. No "Controlling…" text.
+- The HUD never takes focus or clicks. A 128×104 pt popup appears at screen
+  center and dismisses after 1.5 seconds. Mac uses a green background and Apple
+  logo; Linux uses red and the original Omarchy icon (slightly larger).
+  No persistent badge or "Controlling…" text. The icon changes on confirmed entry.
+- `omarchy-icon.png` is copied from `/usr/share/omarchy/icon.png` on Arthur's
+  Omarchy installation, preserving its original transparency; install it beside
+  `LanMouseHUD`. AppKit renders it as a white template, without modifying the asset.
 - Sound is enabled by default (Linux: Pop, Mac: Tink at 55% app volume).
   Set `LAN_MOUSE_SOUND=0` on the HUD launch agent to mute it. Duplicate states
   and HUD startup do not beep. The last confirmed state survives HUD restarts.
