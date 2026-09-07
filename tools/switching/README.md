@@ -20,9 +20,12 @@ The existing uinput/keyd and Karabiner F19 keyboard path is retained.
   transition metadata, never typed content.
 - The switch hook runs in the capture task, in order: `connecting` (set raw keys),
   `remote` (matching acknowledgement), `local`, `error`, or silent `reset`.
-- The HUD never takes focus or clicks. A 1.1-second toast becomes a small remote
-  badge. Connecting only appears after 250 ms. Sound defaults off; set
-  `LAN_MOUSE_SOUND=1` on the HUD launch agent for Pop/Tink feedback.
+- The HUD never takes focus or clicks. It is a persistent 46×34 pt monochrome
+  keyboard badge: green for Mac, red for Linux. It changes on confirmed entry,
+  keeping its previous color while connecting. No "Controlling…" text.
+- Sound is enabled by default (Linux: Pop, Mac: Tink at 55% app volume).
+  Set `LAN_MOUSE_SOUND=0` on the HUD launch agent to mute it. Duplicate states
+  and HUD startup do not beep. The last confirmed state survives HUD restarts.
 
 ## Configuration
 
@@ -80,5 +83,5 @@ full workspace checks also require GTK development libraries.
 
 Live checks: edge movement remains local; hotkey centers each destination; normal
 keys/Caps layers still work; rapid toggles end in the correct state; failed entry
-returns local controls; remote badge and local toast agree with actual destination.
+returns local controls; red/green badge and sound agree with actual destination.
 Live checks affect input, so coordinate them with the person using the keyboard.

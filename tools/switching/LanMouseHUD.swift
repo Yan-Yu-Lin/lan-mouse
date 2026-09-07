@@ -2,12 +2,18 @@ import AppKit
 import Darwin
 
 // A persistent, click-through indicator. --notify never waits for the UI process.
-let directory = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".local/state/lan-mouse")
+let directory = ProcessInfo.processInfo.environment["LAN_MOUSE_HUD_DIR"].map { URL(fileURLWithPath: $0) }
+    ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".local/state/lan-mouse")
+let stateFile = directory.appendingPathComponent("focus-state")
 let fifo = directory.appendingPathComponent("hud.fifo").path
 let states: Set<String> = ["connecting", "remote", "local", "error", "reset"]
 if CommandLine.arguments.count == 3 && CommandLine.arguments[1] == "--notify" {
     let state = CommandLine.arguments[2]
     guard states.contains(state) else { exit(2) }
+    if state != "connecting" {
+        let stable = state == "remote" ? "remote" : "local"
+        try? Data(stable.utf8).write(to: stateFile, options: .atomic)
+    }
     let fd = open(fifo, O_WRONLY | O_NONBLOCK | O_NOFOLLOW)
     if fd >= 0 {
         signal(SIGPIPE, SIG_IGN)
@@ -25,11 +31,12 @@ final class Overlay: NSPanel {
 
 final class HUD {
     let panel = Overlay(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-    let label = NSTextField(labelWithString: "")
+    let background = NSView()
     let symbol = NSImageView()
-    var pending: DispatchWorkItem?
-    var state = "reset"
-    let sounds = ProcessInfo.processInfo.environment["LAN_MOUSE_SOUND"] == "1"
+    var remote = false
+    let sounds = ProcessInfo.processInfo.environment["LAN_MOUSE_SOUND"] != "0"
+    let macSound = NSSound(named: "Tink")
+    let linuxSound = NSSound(named: "Pop")
 
     init() {
         panel.level = .statusBar
@@ -39,68 +46,40 @@ final class HUD {
         panel.ignoresMouseEvents = true
         panel.hidesOnDeactivate = false
         panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenAuxiliary]
-        let background = NSVisualEffectView()
-        background.material = .hudWindow
-        background.blendingMode = .behindWindow
-        background.state = .active
         background.wantsLayer = true
-        background.layer?.cornerRadius = 16
+        background.layer?.cornerRadius = 11
         background.layer?.masksToBounds = true
         panel.contentView = background
-        label.font = .systemFont(ofSize: 15, weight: .medium)
-        label.textColor = .labelColor
-        background.addSubview(label)
         background.addSubview(symbol)
-        symbol.contentTintColor = .systemTeal
+        symbol.contentTintColor = .white
+        symbol.frame = NSRect(x: 11, y: 7, width: 24, height: 20)
+        macSound?.volume = 0.55
+        linuxSound?.volume = 0.55
     }
 
-    func draw(_ text: String, icon: String, compact: Bool = false) {
+    func draw() {
         guard let screen = NSScreen.main ?? NSScreen.screens.first else { return }
-        let width: CGFloat = compact ? 138 : 272
-        let height: CGFloat = compact ? 34 : 58
         let visible = screen.visibleFrame
-        let x = compact ? visible.maxX - width - 18 : visible.midX - width / 2
-        panel.setFrame(NSRect(x: x, y: visible.maxY - height - 22, width: width, height: height), display: true)
-        symbol.image = NSImage(systemSymbolName: icon, accessibilityDescription: text)
-        symbol.frame = NSRect(x: compact ? 12 : 20, y: (height-22)/2, width: 22, height: 22)
-        label.stringValue = text
-        label.font = .systemFont(ofSize: compact ? 12 : 15, weight: .medium)
-        label.frame = NSRect(x: compact ? 42 : 56, y: (height-22)/2, width: width-62, height: 22)
-        panel.alphaValue = 1
+        panel.setFrame(NSRect(x: visible.maxX - 64, y: visible.maxY - 52, width: 46, height: 34), display: true)
+        // One solid hue per destination, with the same white keyboard glyph.
+        let color = remote
+            ? NSColor(srgbRed: 0.76, green: 0.20, blue: 0.23, alpha: 1)
+            : NSColor(srgbRed: 0.13, green: 0.49, blue: 0.29, alpha: 1)
+        background.layer?.backgroundColor = color.cgColor
+        symbol.image = NSImage(systemSymbolName: "keyboard", accessibilityDescription: remote ? "Controlling Linux" : "Controlling Mac")
         panel.orderFrontRegardless()
     }
 
-    func update(_ next: String) {
-        guard states.contains(next) else { return }
-        pending?.cancel()
-        state = next
-        switch next {
-        case "connecting":
-            let task = DispatchWorkItem { [weak self] in self?.draw("Connecting to Omarchy…", icon: "arrow.right.circle") }
-            pending = task
-            DispatchQueue.main.asyncAfter(deadline: .now()+0.25, execute: task)
-            return
-        case "remote": draw("Controlling Omarchy", icon: "desktopcomputer")
-        case "local": draw("Controlling Mac", icon: "laptopcomputer")
-        case "error": draw("Back on Mac · switch failed", icon: "exclamationmark.circle")
-        default: panel.orderOut(nil); return
+    func update(_ next: String, announce: Bool = true) {
+        guard states.contains(next), next != "connecting" else { return }
+        let changed = remote != (next == "remote")
+        remote = next == "remote"
+        draw()
+        if changed && sounds && announce && (next == "remote" || next == "local") {
+            let sound = remote ? linuxSound : macSound
+            sound?.stop()
+            sound?.play()
         }
-        if sounds && (next == "remote" || next == "local") {
-            NSSound(named: next == "remote" ? "Pop" : "Tink")?.play()
-        }
-        let task = DispatchWorkItem { [weak self] in
-            guard let self = self else { return }
-            if self.state == "remote" {
-                self.draw("Omarchy", icon: "desktopcomputer", compact: true)
-            } else {
-                NSAnimationContext.runAnimationGroup { context in
-                    context.duration = 0.18
-                    self.panel.animator().alphaValue = 0
-                }
-            }
-        }
-        pending = task
-        DispatchQueue.main.asyncAfter(deadline: .now()+(next == "error" ? 2.5 : 1.1), execute: task)
     }
 }
 
@@ -131,9 +110,12 @@ source.setEventHandler {
     if input.count > 4096 { input = "" }
 }
 source.resume()
+let savedState = (try? String(contentsOf: stateFile, encoding: .utf8)) ?? "local"
+hud.update(savedState, announce: false)
 if CommandLine.arguments.contains("--preview") { hud.update("remote") }
 if let index = CommandLine.arguments.firstIndex(of: "--snapshot"), index + 1 < CommandLine.arguments.count {
-    hud.update("remote")
+    let previewState = CommandLine.arguments.contains("--local") ? "local" : "remote"
+    hud.update(previewState, announce: false)
     DispatchQueue.main.asyncAfter(deadline: .now()+0.3) {
         let view = hud.panel.contentView!
         if let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
