@@ -77,11 +77,13 @@ impl Emulation {
     pub(crate) fn new(
         backend: Option<input_emulation::Backend>,
         listener: LanMouseListener,
+        receive_enter_hook: Option<String>,
     ) -> Self {
         let emulation_proxy = EmulationProxy::new(backend);
         let (request_tx, request_rx) = channel();
         let (event_tx, event_rx) = channel();
         let emulation_task = ListenTask {
+            receive_enter_hook,
             listener,
             emulation_proxy,
             request_rx,
@@ -130,6 +132,7 @@ impl Emulation {
 }
 
 struct ListenTask {
+    receive_enter_hook: Option<String>,
     listener: LanMouseListener,
     emulation_proxy: EmulationProxy,
     request_rx: Receiver<EmulationRequest>,
@@ -141,6 +144,7 @@ impl ListenTask {
         let mut interval = tokio::time::interval(Duration::from_secs(5));
         let mut last_response = HashMap::new();
         let mut rejected_connections = HashMap::new();
+        let mut hotkey_sessions: HashMap<SocketAddr, (u32, bool)> = HashMap::new();
         loop {
             select! {
                 e = self.listener.next() => {match e {
@@ -148,6 +152,25 @@ impl ListenTask {
                         log::trace!("{event} <-<-<-<-<- {addr}");
                         last_response.insert(addr, Instant::now());
                         match event {
+                            ProtoEvent::HotkeyEnter { pos, serial } => {
+                                let previous = hotkey_sessions.get(&addr).copied();
+                                if let Some((old, active)) = previous {
+                                    if old == serial {
+                                        if active { self.listener.reply(addr, ProtoEvent::Ack(serial)).await; }
+                                        continue;
+                                    }
+                                    if !crate::switching::newer(serial, old) { continue; }
+                                }
+                                if !self.emulation_proxy.emulation_active.get() { continue; }
+                                if let Some(fingerprint) = self.listener.get_certificate_fingerprint(addr).await {
+                                    // Run destination positioning once, before acknowledging readiness.
+                                    if !crate::switching::run_hook(self.receive_enter_hook.clone(), "incoming").await { continue; }
+                                    hotkey_sessions.insert(addr, (serial, true));
+                                    self.event_tx.send(EmulationEvent::ReleaseNotify).expect("channel closed");
+                                    self.event_tx.send(EmulationEvent::Entered { addr, pos: to_ipc_pos(pos), fingerprint }).expect("channel closed");
+                                    self.listener.reply(addr, ProtoEvent::Ack(serial)).await;
+                                }
+                            }
                             ProtoEvent::Enter(pos) => {
                                 if let Some(fingerprint) = self.listener.get_certificate_fingerprint(addr).await {
                                     log::info!("releasing capture: {addr} entered this device");
@@ -156,11 +179,21 @@ impl ListenTask {
                                     self.event_tx.send(EmulationEvent::Entered{addr, pos: to_ipc_pos(pos), fingerprint}).expect("channel closed");
                                 }
                             }
-                            ProtoEvent::Leave(_) => {
+                            ProtoEvent::Leave(serial) => {
+                                if serial != 0 {
+                                    if let Some((old, _)) = hotkey_sessions.get(&addr) {
+                                        if serial != *old && !crate::switching::newer(serial, *old) { continue; }
+                                    }
+                                    hotkey_sessions.insert(addr, (serial, false));
+                                }
                                 self.emulation_proxy.remove(addr);
                                 self.listener.reply(addr, ProtoEvent::Ack(0)).await;
                             }
-                            ProtoEvent::Input(event) => self.emulation_proxy.consume(event, addr),
+                            ProtoEvent::Input(event) => {
+                                if !matches!(hotkey_sessions.get(&addr), Some((_, false))) {
+                                    self.emulation_proxy.consume(event, addr);
+                                }
+                            },
                             ProtoEvent::Ping => self.listener.reply(addr, ProtoEvent::Pong(self.emulation_proxy.emulation_active.get())).await,
                             // Peer's version handshake. Echo our own
                             // commit back so the peer's connect-side
@@ -211,6 +244,7 @@ impl ListenTask {
                         if instant.elapsed() > Duration::from_secs(1) {
                             log::warn!("releasing keys: {addr} not responding!");
                             self.emulation_proxy.remove(addr);
+                            hotkey_sessions.remove(&addr);
                             self.event_tx.send(EmulationEvent::Disconnected { addr }).expect("channel closed");
                             false
                         } else {

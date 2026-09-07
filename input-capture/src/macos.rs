@@ -34,7 +34,7 @@ use std::{
 };
 use tokio::sync::{
     Mutex,
-    mpsc::{self, Receiver, Sender},
+    mpsc::{self, Sender, UnboundedReceiver, UnboundedSender},
     oneshot,
 };
 
@@ -58,11 +58,12 @@ struct InputCaptureState {
     bounds: Bounds,
     /// current state of modifier keys
     modifier_state: XMods,
+    hotkey_only: bool,
 }
 
 #[derive(Debug)]
 enum ProducerEvent {
-    Release,
+    Release(bool),
     Create(Position),
     Destroy(Position),
     Grab(Position),
@@ -80,12 +81,16 @@ impl InputCaptureState {
             enter_position: None,
             bounds: Bounds::default(),
             modifier_state: Default::default(),
+            hotkey_only: false,
         };
         res.update_bounds()?;
         Ok(res)
     }
 
     fn crossed(&mut self, event: &CGEvent) -> Option<Position> {
+        if self.hotkey_only {
+            return None;
+        }
         let location = event.location();
         let relative_x = event.get_double_value_field(EventField::MOUSE_EVENT_DELTA_X);
         let relative_y = event.get_double_value_field(EventField::MOUSE_EVENT_DELTA_Y);
@@ -164,11 +169,13 @@ impl InputCaptureState {
     ) -> Result<Option<Position>, CaptureError> {
         log::debug!("handling event: {producer_event:?}");
         match producer_event {
-            ProducerEvent::Release => {
-                if self.current_pos.is_some() {
-                    // hotkey switching leaves the (hidden) cursor parked at
-                    // the screen edge; bring it to the middle of the main
-                    // display so the user doesn't have to hunt for it.
+            ProducerEvent::Release(center) => {
+                // Clear current_pos FIRST so a motion event racing in on the
+                // tap thread can't warp the cursor back to the edge after we
+                // centered it. show_cursor is unconditional: the hide count
+                // is per-process and a stale one leaves an invisible cursor.
+                let was_captured = self.current_pos.take().is_some();
+                if was_captured && center {
                     let b = CGDisplay::main().bounds();
                     let center = CGPoint::new(
                         b.origin.x + b.size.width / 2.,
@@ -176,9 +183,8 @@ impl InputCaptureState {
                     );
                     CGDisplay::warp_mouse_cursor_position(center)
                         .map_err(CaptureError::WarpCursor)?;
-                    self.show_cursor()?;
-                    self.current_pos = None;
                 }
+                self.show_cursor()?;
             }
             ProducerEvent::Grab(pos) => {
                 if self.current_pos.is_none() {
@@ -459,7 +465,7 @@ fn get_events(
 fn create_event_tap<'a>(
     client_state: Arc<Mutex<InputCaptureState>>,
     notify_tx: Sender<ProducerEvent>,
-    event_tx: Sender<(Position, CaptureEvent)>,
+    event_tx: UnboundedSender<(Position, CaptureEvent)>,
 ) -> Result<CGEventTap<'a>, MacosCaptureCreationError> {
     // Shared slot for the tap's mach port pointer. Stored as `usize`
     // because raw pointers aren't `Send`, but the integer
@@ -584,7 +590,7 @@ fn create_event_tap<'a>(
             res_events.iter().for_each(|e| {
                 // error must be ignored, since the event channel
                 // may already be closed when the InputCapture instance is dropped.
-                let _ = event_tx.blocking_send((pos, *e));
+                let _ = event_tx.send((pos, *e));
             });
             // Returning Drop should stop the event from being processed
             // but core fundation still returns the event
@@ -625,7 +631,7 @@ fn create_event_tap<'a>(
 
 fn event_tap_thread(
     client_state: Arc<Mutex<InputCaptureState>>,
-    event_tx: Sender<(Position, CaptureEvent)>,
+    event_tx: UnboundedSender<(Position, CaptureEvent)>,
     notify_tx: Sender<ProducerEvent>,
     ready: std::sync::mpsc::Sender<Result<CFRunLoop, MacosCaptureCreationError>>,
     exit: oneshot::Sender<()>,
@@ -701,7 +707,9 @@ extern "C" fn display_reconfiguration_callback(_display: u32, flags: u32, user_i
 }
 
 pub struct MacOSInputCapture {
-    event_rx: Receiver<(Position, CaptureEvent)>,
+    state: Arc<Mutex<InputCaptureState>>,
+    event_tx: UnboundedSender<(Position, CaptureEvent)>,
+    event_rx: UnboundedReceiver<(Position, CaptureEvent)>,
     notify_tx: Sender<ProducerEvent>,
     run_loop: CFRunLoop,
 }
@@ -711,7 +719,7 @@ impl MacOSInputCapture {
         request_macos_capture_permissions()?;
 
         let state = Arc::new(Mutex::new(InputCaptureState::new()?));
-        let (event_tx, event_rx) = mpsc::channel(32);
+        let (event_tx, event_rx) = mpsc::unbounded_channel();
         let (notify_tx, mut notify_rx) = mpsc::channel(32);
         let (ready_tx, ready_rx) = std::sync::mpsc::channel();
         let (tap_exit_tx, mut tap_exit_rx) = oneshot::channel();
@@ -724,6 +732,7 @@ impl MacOSInputCapture {
         let event_tap_thread_state = state.clone();
         let event_tap_notify = notify_tx.clone();
         let producer_event_tx = event_tx.clone();
+        let direct_event_tx = event_tx.clone();
         thread::spawn(move || {
             event_tap_thread(
                 event_tap_thread_state,
@@ -737,6 +746,7 @@ impl MacOSInputCapture {
         // wait for event tap creation result
         let run_loop = ready_rx.recv().expect("channel closed")?;
 
+        let direct_state = state.clone();
         let _tap_task: tokio::task::JoinHandle<()> = tokio::task::spawn_local(async move {
             loop {
                 tokio::select! {
@@ -748,7 +758,7 @@ impl MacOSInputCapture {
                         match state.handle_producer_event(producer_event).await {
                             Ok(Some(pos)) => {
                                 // hotkey enter: emit Begin as a barrier crossing would
-                                let _ = producer_event_tx.send((pos, CaptureEvent::Begin)).await;
+                                let _ = producer_event_tx.send((pos, CaptureEvent::Begin));
                             }
                             Ok(None) => {}
                             Err(e) => log::error!("Failed to handle producer event: {e}"),
@@ -762,6 +772,8 @@ impl MacOSInputCapture {
         });
 
         Ok(Self {
+            state: direct_state,
+            event_tx: direct_event_tx,
             event_rx,
             notify_tx,
             run_loop,
@@ -830,20 +842,37 @@ impl Capture for MacOSInputCapture {
     }
 
     async fn release(&mut self) -> Result<(), CaptureError> {
-        let notify_tx = self.notify_tx.clone();
-        tokio::task::spawn_local(async move {
-            log::debug!("notifying Release");
-            let _ = notify_tx.send(ProducerEvent::Release).await;
-        });
+        let mut state = self.state.lock().await;
+        state
+            .handle_producer_event(ProducerEvent::Release(false))
+            .await?;
+        while self.event_rx.try_recv().is_ok() {}
         Ok(())
     }
 
+    async fn release_centered(&mut self) -> Result<(), CaptureError> {
+        let mut state = self.state.lock().await;
+        state
+            .handle_producer_event(ProducerEvent::Release(true))
+            .await?;
+        while self.event_rx.try_recv().is_ok() {}
+        Ok(())
+    }
+
+    async fn set_hotkey_only(&mut self, enabled: bool) {
+        self.state.lock().await.hotkey_only = enabled;
+    }
+
     async fn enter(&mut self, pos: Position) -> Result<(), CaptureError> {
-        let notify_tx = self.notify_tx.clone();
-        tokio::task::spawn_local(async move {
-            log::debug!("notifying Enter {pos}");
-            let _ = notify_tx.send(ProducerEvent::Enter(pos)).await;
-        });
+        let entered = self
+            .state
+            .lock()
+            .await
+            .handle_producer_event(ProducerEvent::Enter(pos))
+            .await?;
+        if let Some(pos) = entered {
+            let _ = self.event_tx.send((pos, CaptureEvent::Begin));
+        }
         Ok(())
     }
 

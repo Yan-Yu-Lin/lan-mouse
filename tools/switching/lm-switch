@@ -1,0 +1,13 @@
+#!/bin/bash
+# The daemon owns ordered raw-mode and HUD transitions; CLI only requests a switch.
+set -u
+LM="/Applications/Lan Mouse.app/Contents/MacOS/lan-mouse"
+case "${1:-}" in
+  to-omarchy) "$LM" cli enter 0 ;;
+  to-mac) "$LM" cli release ;;
+  reset-local) LAN_MOUSE_STATE=reset exec "$HOME/.local/bin/lm-feedback" ;;
+  *) echo 'usage: lm-switch {to-omarchy|to-mac|reset-local}' >&2; exit 2 ;;
+esac
+status=$?
+if [ "$status" -ne 0 ]; then LAN_MOUSE_STATE=error "$HOME/.local/bin/lm-feedback"; fi
+exit "$status"

@@ -29,6 +29,11 @@ impl Capture for WindowsInputCapture {
         Ok(())
     }
 
+    async fn release_centered(&mut self) -> Result<(), CaptureError> {
+        self.release().await
+    }
+    async fn set_hotkey_only(&mut self, _enabled: bool) {}
+
     async fn release(&mut self) -> Result<(), CaptureError> {
         self.event_thread.release_capture();
         Ok(())

@@ -51,6 +51,10 @@ pub enum ProtoEvent {
     /// notify a client that the cursor entered its region at the given position
     /// [`ProtoEvent::Ack`] with the same serial is used for synchronization between devices
     Enter(Position),
+    HotkeyEnter {
+        pos: Position,
+        serial: u32,
+    },
     /// notify a client that the cursor left its region
     /// [`ProtoEvent::Ack`] with the same serial is used for synchronization between devices
     Leave(u32),
@@ -71,12 +75,15 @@ pub enum ProtoEvent {
     /// `shadow_rs`'s `SHORT_COMMIT`. Old peers that don't
     /// recognize the event type silently skip it per the
     /// forward-compat handling in the receive loop.
-    Hello { commit: [u8; 8] },
+    Hello {
+        commit: [u8; 8],
+    },
 }
 
 impl Display for ProtoEvent {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
+            ProtoEvent::HotkeyEnter { pos, serial } => write!(f, "HotkeyEnter({pos}, {serial})"),
             ProtoEvent::Enter(s) => write!(f, "Enter({s})"),
             ProtoEvent::Leave(s) => write!(f, "Leave({s})"),
             ProtoEvent::Ack(s) => write!(f, "Ack({s})"),
@@ -112,6 +119,7 @@ pub enum EventType {
     Leave,
     Ack,
     Hello,
+    HotkeyEnter,
 }
 
 impl ProtoEvent {
@@ -132,6 +140,7 @@ impl ProtoEvent {
             ProtoEvent::Ping => EventType::Ping,
             ProtoEvent::Pong(_) => EventType::Pong,
             ProtoEvent::Enter(_) => EventType::Enter,
+            ProtoEvent::HotkeyEnter { .. } => EventType::HotkeyEnter,
             ProtoEvent::Leave(_) => EventType::Leave,
             ProtoEvent::Ack(_) => EventType::Ack,
             ProtoEvent::Hello { .. } => EventType::Hello,
@@ -186,6 +195,10 @@ impl TryFrom<[u8; MAX_EVENT_SIZE]> for ProtoEvent {
             ))),
             EventType::Ping => Ok(Self::Ping),
             EventType::Pong => Ok(Self::Pong(decode_u8(&mut buf)? != 0)),
+            EventType::HotkeyEnter => Ok(Self::HotkeyEnter {
+                pos: decode_u8(&mut buf)?.try_into()?,
+                serial: decode_u32(&mut buf)?,
+            }),
             EventType::Enter => Ok(Self::Enter(decode_u8(&mut buf)?.try_into()?)),
             EventType::Leave => Ok(Self::Leave(decode_u32(&mut buf)?)),
             EventType::Ack => Ok(Self::Ack(decode_u32(&mut buf)?)),
@@ -257,6 +270,10 @@ impl From<ProtoEvent> for ([u8; MAX_EVENT_SIZE], usize) {
                 },
                 ProtoEvent::Ping => {}
                 ProtoEvent::Pong(alive) => encode_u8(buf, len, alive as u8),
+                ProtoEvent::HotkeyEnter { pos, serial } => {
+                    encode_u8(buf, len, pos as u8);
+                    encode_u32(buf, len, serial);
+                }
                 ProtoEvent::Enter(pos) => encode_u8(buf, len, pos as u8),
                 ProtoEvent::Leave(serial) => encode_u32(buf, len, serial),
                 ProtoEvent::Ack(serial) => encode_u32(buf, len, serial),
@@ -307,3 +324,50 @@ encode_impl!(u8);
 encode_impl!(u32);
 encode_impl!(i32);
 encode_impl!(f64);
+
+#[cfg(test)]
+mod switching_tests {
+    use super::*;
+
+    #[test]
+    fn hotkey_entry_roundtrips_serial_and_direction() {
+        for pos in [
+            Position::Left,
+            Position::Right,
+            Position::Top,
+            Position::Bottom,
+        ] {
+            for serial in [1, 42, u32::MAX] {
+                let (bytes, size): ([u8; MAX_EVENT_SIZE], usize) =
+                    ProtoEvent::HotkeyEnter { pos, serial }.into();
+                assert_eq!(size, 6);
+                match ProtoEvent::try_from(bytes).unwrap() {
+                    ProtoEvent::HotkeyEnter {
+                        pos: decoded,
+                        serial: got,
+                    } => {
+                        assert_eq!(decoded as u8, pos as u8);
+                        assert_eq!(got, serial);
+                    }
+                    other => panic!("unexpected event: {other:?}"),
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn extension_preserves_legacy_wire_ids_and_rejects_invalid_position() {
+        assert_eq!(EventType::Enter as u8, 8);
+        assert_eq!(EventType::Leave as u8, 9);
+        assert_eq!(EventType::Ack as u8, 10);
+        assert_eq!(EventType::Hello as u8, 11);
+        assert_eq!(EventType::HotkeyEnter as u8, 12);
+        let (mut bytes, _): ([u8; MAX_EVENT_SIZE], usize) = ProtoEvent::HotkeyEnter {
+            pos: Position::Left,
+            serial: 1,
+        }
+        .into();
+        bytes[1] = 255;
+        assert!(ProtoEvent::try_from(bytes).is_err());
+    }
+}

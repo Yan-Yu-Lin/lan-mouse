@@ -477,3 +477,7 @@ The following sections detail the emulation and capture backends provided by lan
 - `windows`: Backend for input capture on Windows.
 - `macos`: Backend for input capture on MacOS.
 - `x11`: TODO (not yet supported)
+
+## Arthur’s hotkey-switching fork
+
+See [hotkey switching and Mac HUD](tools/switching/README.md) for the opt-in Mac–Hyprland workflow, configuration, protocol compatibility, and validation.

@@ -620,6 +620,11 @@ impl Capture for LayerShellInputCapture {
         Ok(inner.flush_events()?)
     }
 
+    async fn release_centered(&mut self) -> Result<(), CaptureError> {
+        self.release().await
+    }
+    async fn set_hotkey_only(&mut self, _enabled: bool) {}
+
     async fn release(&mut self) -> Result<(), CaptureError> {
         log::debug!("releasing pointer");
         let inner = self.0.get_mut();

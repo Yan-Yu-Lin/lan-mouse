@@ -136,12 +136,16 @@ impl LanMouseConnection {
                 if !self.client_manager.alive(handle) {
                     return Err(LanMouseConnectionError::TargetEmulationDisabled);
                 }
-                match conn.send(buf).await {
-                    Ok(_) => {}
-                    Err(e) => {
-                        log::warn!("client {handle} failed to send: {e}");
-                        disconnect(&self.client_manager, handle, addr, &self.conns).await;
-                    }
+                match tokio::time::timeout(Duration::from_millis(100), conn.send(buf)).await {
+                    Err(_) => return Err(LanMouseConnectionError::Timeout),
+                    Ok(result) => match result {
+                        Ok(_) => {}
+                        Err(e) => {
+                            log::warn!("client {handle} failed to send: {e}");
+                            disconnect(&self.client_manager, handle, addr, &self.conns).await;
+                            return Err(e.into());
+                        }
+                    },
                 }
                 log::trace!("{event} >->->->->- {addr}");
                 return Ok(());
@@ -293,6 +297,8 @@ async fn receive_loop(
     }
     log::warn!("recv error");
     disconnect(&client_manager, handle, addr, &conns).await;
+    // Recover local input even if the user is idle when the peer disappears.
+    let _ = tx.send((handle, ProtoEvent::Leave(0)));
 }
 
 async fn disconnect(
@@ -307,4 +313,95 @@ async fn disconnect(
     client_manager.set_peer_commit(handle, None);
     let active: Vec<SocketAddr> = conns.lock().await.keys().copied().collect();
     log::info!("active connections: {active:?}");
+}
+
+#[cfg(test)]
+mod switching_tests {
+    use super::*;
+    use crate::{
+        crypto,
+        emulation::{Emulation, EmulationEvent},
+        listen::LanMouseListener,
+    };
+    use std::sync::RwLock;
+
+    #[tokio::test]
+    async fn authenticated_hotkey_retries_center_once_and_reject_canceled_entries() {
+        tokio::task::LocalSet::new()
+            .run_until(async {
+                tokio::time::timeout(Duration::from_secs(8), async {
+                    let receiver_cert =
+                        Certificate::generate_self_signed(["receiver".into()]).unwrap();
+                    let sender_cert = Certificate::generate_self_signed(["sender".into()]).unwrap();
+                    let authorized = Arc::new(RwLock::new(HashMap::from([(
+                        crypto::certificate_fingerprint(&sender_cert),
+                        "test sender".into(),
+                    )])));
+                    let probe = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+                    let port = probe.local_addr().unwrap().port();
+                    drop(probe);
+                    let listener = LanMouseListener::new(port, receiver_cert, authorized)
+                        .await
+                        .unwrap();
+                    let stamp = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_nanos();
+                    let count =
+                        format!("/tmp/lan-mouse-switch-test-{}-{stamp}", std::process::id());
+                    let hook = format!("echo centered >> '{count}'");
+                    // Dummy emulation ensures this test never injects real keyboard or mouse input.
+                    let mut emulation =
+                        Emulation::new(Some(input_emulation::Backend::Dummy), listener, Some(hook));
+                    while !matches!(emulation.event().await, EmulationEvent::EmulationEnabled) {}
+                    let addr = format!("127.0.0.1:{port}").parse().unwrap();
+                    let (connection, _) = connect(addr, sender_cert).await.unwrap();
+                    async fn send(connection: &Arc<dyn Conn + Send + Sync>, event: ProtoEvent) {
+                        let (bytes, len): ([u8; MAX_EVENT_SIZE], usize) = event.into();
+                        connection.send(&bytes[..len]).await.unwrap();
+                    }
+                    async fn ack(connection: &Arc<dyn Conn + Send + Sync>) -> u32 {
+                        let mut bytes = [0; MAX_EVENT_SIZE];
+                        tokio::time::timeout(Duration::from_secs(2), connection.recv(&mut bytes))
+                            .await
+                            .unwrap()
+                            .unwrap();
+                        match ProtoEvent::try_from(bytes).unwrap() {
+                            ProtoEvent::Ack(serial) => serial,
+                            other => panic!("expected ack, got {other:?}"),
+                        }
+                    }
+                    let entry = |serial| ProtoEvent::HotkeyEnter {
+                        pos: lan_mouse_proto::Position::Left,
+                        serial,
+                    };
+                    send(&connection, entry(42)).await;
+                    assert_eq!(ack(&connection).await, 42);
+                    send(&connection, entry(42)).await;
+                    assert_eq!(ack(&connection).await, 42);
+                    assert_eq!(std::fs::read_to_string(&count).unwrap().lines().count(), 1);
+                    send(&connection, ProtoEvent::Leave(42)).await;
+                    assert_eq!(ack(&connection).await, 0);
+                    send(&connection, entry(42)).await;
+                    send(&connection, entry(41)).await;
+                    let mut bytes = [0; MAX_EVENT_SIZE];
+                    assert!(
+                        tokio::time::timeout(
+                            Duration::from_millis(100),
+                            connection.recv(&mut bytes)
+                        )
+                        .await
+                        .is_err()
+                    );
+                    send(&connection, entry(43)).await;
+                    assert_eq!(ack(&connection).await, 43);
+                    assert_eq!(std::fs::read_to_string(&count).unwrap().lines().count(), 2);
+                    connection.close().await.unwrap();
+                    emulation.terminate().await;
+                })
+                .await
+                .expect("isolated DTLS test timed out");
+            })
+            .await;
+    }
 }

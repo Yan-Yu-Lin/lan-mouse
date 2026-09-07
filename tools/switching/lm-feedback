@@ -1,0 +1,14 @@
+#!/bin/bash
+set -eu
+KC="/Library/Application Support/org.pqrs/Karabiner-Elements/bin/karabiner_cli"
+HUD="$HOME/.local/lib/lan-mouse/LanMouseHUD"
+state="${LAN_MOUSE_STATE:-reset}"
+case "$state" in
+  connecting) value=1 ;;
+  local|error|reset) value=0 ;;
+  remote) exec "$HUD" --notify remote ;;
+  *) exit 2 ;;
+esac
+"$KC" --set-variables "{\"lanmouse\":$value,\"caps-mode\":0,\"cleanshot-mode\":0,\"window-mode\":0,\"resize-mode\":0,\"mcbridge-page2\":0,\"mcbridge-page2-group-1\":0}"
+# Missing UI must never delay keyboard recovery.
+if [ -x "$HUD" ]; then "$HUD" --notify "$state"; fi

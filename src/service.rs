@@ -98,9 +98,15 @@ impl Service {
 
         // input capture + emulation
         let capture_backend = config.capture_backend().map(|b| b.into());
-        let capture = Capture::new(capture_backend, conn, config.release_bind());
+        let capture = Capture::new(
+            capture_backend,
+            conn,
+            config.release_bind(),
+            config.hotkey_only(),
+            config.switch_hook(),
+        );
         let emulation_backend = config.emulation_backend().map(|b| b.into());
-        let emulation = Emulation::new(emulation_backend, listener);
+        let emulation = Emulation::new(emulation_backend, listener, config.receive_enter_hook());
 
         // create dns resolver
         let resolver = DnsResolver::new()?;
@@ -218,7 +224,7 @@ impl Service {
                 self.client_manager.set_leave_hook(handle, leave_hook)
             }
             FrontendRequest::Enter(handle) => self.capture.enter(handle),
-            FrontendRequest::Release => self.capture.release(),
+            FrontendRequest::Release => self.capture.release_hotkey(),
             FrontendRequest::SaveConfiguration => self.save_config(),
         }
     }
@@ -358,6 +364,10 @@ impl Service {
                 let cmd = self.client_manager.get_enter_cmd(handle);
                 self.spawn_hook_command(cmd);
             }
+            ICaptureEvent::ClientReady(handle) => {
+                log::info!("switch confirmed: client={handle}");
+            }
+            ICaptureEvent::ClientFailed => {}
             ICaptureEvent::ClientLeft(handle) => {
                 log::info!("left client {handle}");
                 let cmd = self.client_manager.get_leave_cmd(handle);

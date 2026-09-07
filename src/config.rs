@@ -62,6 +62,9 @@ fn default_path() -> Result<PathBuf, VarError> {
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 struct ConfigToml {
+    hotkey_only: Option<bool>,
+    switch_hook: Option<String>,
+    receive_enter_hook: Option<String>,
     capture_backend: Option<CaptureBackend>,
     emulation_backend: Option<EmulationBackend>,
     port: Option<u16>,
@@ -497,6 +500,24 @@ impl Config {
             .flatten()
             .map(From::<TomlClient>::from)
             .collect()
+    }
+
+    /// Applied at daemon startup.
+    pub fn hotkey_only(&self) -> bool {
+        self.config_toml
+            .as_ref()
+            .and_then(|c| c.hotkey_only)
+            .unwrap_or(false)
+    }
+    pub fn switch_hook(&self) -> Option<String> {
+        self.config_toml
+            .as_ref()
+            .and_then(|c| c.switch_hook.clone())
+    }
+    pub fn receive_enter_hook(&self) -> Option<String> {
+        self.config_toml
+            .as_ref()
+            .and_then(|c| c.receive_enter_hook.clone())
     }
 
     /// release bind for returning control to the host

@@ -196,7 +196,9 @@ impl Emulation for UinputEmulation {
                 }
             },
             Event::Keyboard(e) => match e {
-                KeyboardEvent::Key { key: code, state, .. } => {
+                KeyboardEvent::Key {
+                    key: code, state, ..
+                } => {
                     let Ok(code) = u16::try_from(code) else {
                         log::warn!("uinput: key out of range: {code}");
                         return Ok(());

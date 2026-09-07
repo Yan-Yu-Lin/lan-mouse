@@ -168,7 +168,18 @@ impl InputCapture {
     /// release mouse
     pub async fn release(&mut self) -> Result<(), CaptureError> {
         self.pressed_keys.clear();
+        self.pending.clear();
         self.capture.release().await
+    }
+
+    pub async fn release_centered(&mut self) -> Result<(), CaptureError> {
+        self.pressed_keys.clear();
+        self.pending.clear();
+        self.capture.release_centered().await
+    }
+
+    pub async fn set_hotkey_only(&mut self, enabled: bool) {
+        self.capture.set_hotkey_only(enabled).await;
     }
 
     /// enter the client with the given id as if the pointer had crossed
@@ -296,6 +307,9 @@ trait Capture: Stream<Item = Result<(Position, CaptureEvent), CaptureError>> + U
 
     /// release mouse
     async fn release(&mut self) -> Result<(), CaptureError>;
+
+    async fn release_centered(&mut self) -> Result<(), CaptureError>;
+    async fn set_hotkey_only(&mut self, enabled: bool);
 
     /// explicitly enter the capture at the given position without the
     /// pointer crossing the screen edge (hotkey switching). Backends that
