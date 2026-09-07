@@ -624,6 +624,7 @@ impl Capture for LayerShellInputCapture {
         self.release().await
     }
     async fn set_hotkey_only(&mut self, _enabled: bool) {}
+    async fn ready(&mut self) {}
 
     async fn release(&mut self) -> Result<(), CaptureError> {
         log::debug!("releasing pointer");

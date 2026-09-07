@@ -337,6 +337,7 @@ impl CaptureTask {
                         // connection acknowlegded => set state to Sending
                         ProtoEvent::Ack(serial) => {
                             if self.active_client == Some(handle) && self.state == State::WaitingForAck && serial == self.serial {
+                                capture.ready().await;
                                 self.state = State::Sending;
                                 if let Some(started) = self.started.take() {
                                     log::info!("switch ready: client={handle} elapsed_ms={}", started.elapsed().as_millis());
@@ -446,6 +447,11 @@ impl CaptureTask {
             CaptureEvent::Begin => self.enter_event(handle),
             CaptureEvent::Input(e) => match self.state {
                 State::WaitingForAck => {
+                    // Pointer events belong to the pre-handoff cursor position.
+                    // Only keyboard input may cross the entry acknowledgement.
+                    if matches!(e, Event::Pointer(_)) {
+                        return Ok(());
+                    }
                     // Preserve initial keystrokes, but bound memory during a failed switch.
                     if self.buffered.len() >= 256 {
                         self.release_capture(capture, false).await?;

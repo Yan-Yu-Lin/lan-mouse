@@ -14,8 +14,11 @@ The existing uinput/keyd and Karabiner F19 keyboard path is retained.
   matching acknowledgement the Mac recovers local input and displays failure.
 - Each hotkey entry has a nonzero serial. Duplicate packets are acknowledged without
   re-centering; stale entries/acknowledgements cannot complete a newer switch.
-- Up to 256 initial input events are buffered during entry. Overflow aborts the
+- Up to 256 initial keyboard events are buffered during entry. Overflow aborts the
   switch and recovers local input, rather than replaying an unbounded backlog.
+- Pointer movement, clicks and scrolling during handoff are discarded at Mac capture
+  until Linux acknowledges its new cursor position. They are never replayed after
+  centering. New pointer input starts from that center.
 - The Mac releases capture before bounded remote key cleanup. Timing logs contain
   transition metadata, never typed content.
 - The switch hook runs in the capture task, in order: `connecting` (set raw keys),
@@ -27,7 +30,7 @@ The existing uinput/keyd and Karabiner F19 keyboard path is retained.
 - `omarchy-icon.png` is copied from `/usr/share/omarchy/icon.png` on Arthur's
   Omarchy installation, preserving its original transparency; install it beside
   `LanMouseHUD`. AppKit renders it as a white template, without modifying the asset.
-- Sound is enabled by default (Linux: Pop, Mac: Tink at 55% app volume).
+- Sound is enabled by default (Linux: Glass, Mac: Tink at 55% app volume).
   Set `LAN_MOUSE_SOUND=0` on the HUD launch agent to mute it. Duplicate states
   and HUD startup do not beep. The last confirmed state survives HUD restarts.
 

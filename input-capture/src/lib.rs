@@ -182,6 +182,11 @@ impl InputCapture {
         self.capture.set_hotkey_only(enabled).await;
     }
 
+    /// The destination has positioned its cursor and acknowledged entry.
+    pub async fn ready(&mut self) {
+        self.capture.ready().await;
+    }
+
     /// enter the client with the given id as if the pointer had crossed
     /// its screen edge
     pub async fn enter(&mut self, id: CaptureHandle) -> Result<(), CaptureError> {
@@ -310,6 +315,7 @@ trait Capture: Stream<Item = Result<(Position, CaptureEvent), CaptureError>> + U
 
     async fn release_centered(&mut self) -> Result<(), CaptureError>;
     async fn set_hotkey_only(&mut self, enabled: bool);
+    async fn ready(&mut self);
 
     /// explicitly enter the capture at the given position without the
     /// pointer crossing the screen edge (hotkey switching). Backends that

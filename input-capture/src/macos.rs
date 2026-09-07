@@ -59,6 +59,7 @@ struct InputCaptureState {
     /// current state of modifier keys
     modifier_state: XMods,
     hotkey_only: bool,
+    pointer_ready: bool,
 }
 
 #[derive(Debug)]
@@ -82,6 +83,7 @@ impl InputCaptureState {
             bounds: Bounds::default(),
             modifier_state: Default::default(),
             hotkey_only: false,
+            pointer_ready: true,
         };
         res.update_bounds()?;
         Ok(res)
@@ -187,6 +189,7 @@ impl InputCaptureState {
                 self.show_cursor()?;
             }
             ProducerEvent::Grab(pos) => {
+                self.pointer_ready = true;
                 if self.current_pos.is_none() {
                     self.hide_cursor()?;
                     self.current_pos = Some(pos);
@@ -207,6 +210,7 @@ impl InputCaptureState {
                 )
                 .map_err(|_| CaptureError::EnterNoCursor)?
                 .location();
+                self.pointer_ready = false;
                 self.start_capture_at(location, pos)?;
                 self.hide_cursor()?;
                 self.current_pos = Some(pos);
@@ -462,6 +466,12 @@ fn get_events(
     Ok(())
 }
 
+fn retain_ready_events(events: &mut Vec<CaptureEvent>, ready: bool) {
+    if !ready {
+        events.retain(|event| !matches!(event, CaptureEvent::Input(Event::Pointer(_))));
+    }
+}
+
 fn create_event_tap<'a>(
     client_state: Arc<Mutex<InputCaptureState>>,
     notify_tx: Sender<ProducerEvent>,
@@ -561,6 +571,11 @@ fn create_event_tap<'a>(
             .unwrap_or_else(|e| {
                 log::error!("Failed to get events: {e}");
             });
+
+            // Do not queue pointer activity from the old cursor context. The
+            // destination centers before ACK; forwarding these later causes
+            // an apparent jump away from center during an immediate movement.
+            retain_ready_events(&mut res_events, state.pointer_ready);
 
             // Keep (hidden) cursor at the edge of the screen
             if matches!(
@@ -859,6 +874,10 @@ impl Capture for MacOSInputCapture {
         Ok(())
     }
 
+    async fn ready(&mut self) {
+        self.state.lock().await.pointer_ready = true;
+    }
+
     async fn set_hotkey_only(&mut self, enabled: bool) {
         self.state.lock().await.hotkey_only = enabled;
     }
@@ -979,5 +998,40 @@ bitflags! {
         const Mod3Mask = (1<<5);
         const Mod4Mask = (1<<6);
         const Mod5Mask = (1<<7);
+    }
+}
+
+#[cfg(test)]
+mod entry_tests {
+    use super::*;
+
+    #[test]
+    fn pointer_events_start_fresh_after_ack_but_early_keys_survive() {
+        let key = CaptureEvent::Input(Event::Keyboard(KeyboardEvent::Key {
+            time: 0,
+            key: 30,
+            state: 1,
+        }));
+        let motion = CaptureEvent::Input(Event::Pointer(PointerEvent::Motion {
+            time: 0,
+            dx: 600.,
+            dy: -300.,
+        }));
+        let click = CaptureEvent::Input(Event::Pointer(PointerEvent::Button {
+            time: 0,
+            button: BTN_LEFT,
+            state: 1,
+        }));
+        let scroll = CaptureEvent::Input(Event::Pointer(PointerEvent::Axis {
+            time: 0,
+            axis: 0,
+            value: 20.,
+        }));
+        let mut before_ack = vec![motion, key, click, scroll];
+        retain_ready_events(&mut before_ack, false);
+        assert_eq!(before_ack, vec![key]);
+        let mut after_ack = vec![motion, key, click, scroll];
+        retain_ready_events(&mut after_ack, true);
+        assert_eq!(after_ack, vec![motion, key, click, scroll]);
     }
 }

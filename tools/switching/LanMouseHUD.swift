@@ -38,7 +38,7 @@ final class HUD {
     let omarchyIcon = NSImage(contentsOf: URL(fileURLWithPath: CommandLine.arguments[0]).deletingLastPathComponent().appendingPathComponent("omarchy-icon.png"))
     let sounds = ProcessInfo.processInfo.environment["LAN_MOUSE_SOUND"] != "0"
     let macSound = NSSound(named: "Tink")
-    let linuxSound = NSSound(named: "Pop")
+    let linuxSound = NSSound(named: "Glass")
 
     init() {
         panel.level = .statusBar

@@ -629,6 +629,7 @@ impl LanMouseInputCapture for LibeiInputCapture {
         self.release().await
     }
     async fn set_hotkey_only(&mut self, _enabled: bool) {}
+    async fn ready(&mut self) {}
 
     async fn release(&mut self) -> Result<(), CaptureError> {
         self.notify_release.notify_waiters();

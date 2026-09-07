@@ -33,6 +33,7 @@ impl Capture for WindowsInputCapture {
         self.release().await
     }
     async fn set_hotkey_only(&mut self, _enabled: bool) {}
+    async fn ready(&mut self) {}
 
     async fn release(&mut self) -> Result<(), CaptureError> {
         self.event_thread.release_capture();
